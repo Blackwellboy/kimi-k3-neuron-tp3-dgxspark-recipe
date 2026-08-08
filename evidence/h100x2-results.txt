@@ -1,0 +1,53 @@
+{
+  "host": "74ee9235192e",
+  "ok": true,
+  "errors": [],
+  "gpus": [
+    {
+      "index": 0,
+      "name": "NVIDIA H100 80GB HBM3",
+      "matmul_ok": true,
+      "matmul_sum": 28391.35546875,
+      "free_bytes": 84240695296,
+      "total_bytes": 85017493504
+    },
+    {
+      "index": 1,
+      "name": "NVIDIA H100 80GB HBM3",
+      "matmul_ok": true,
+      "matmul_sum": -44660.28125,
+      "free_bytes": 84240695296,
+      "total_bytes": 85017493504
+    }
+  ],
+  "torch": {
+    "version": "2.12.0+cu130",
+    "cuda": "13.0",
+    "device_count": 2
+  },
+  "nvcc": "missing",
+  "nvidia_smi": "0, NVIDIA H100 80GB HBM3, 81559 MiB, 0 MiB, 0, 0, [N/A], [N/A], Enabled\n1, NVIDIA H100 80GB HBM3, 81559 MiB, 0 MiB, 0, 0, [N/A], [N/A], Enabled"
+}
+====
+NCCL version 2.29.7+cuda13.2
+rank0 count=7168 bytes=28672 correct=True mean_us=24.565 ms185=4.545
+rank0 count=10752 bytes=43008 correct=True mean_us=31.986 ms185=5.917
+rank0 PASS
+rank1 count=7168 bytes=28672 correct=True mean_us=24.639 ms185=4.558
+rank1 count=10752 bytes=43008 correct=True mean_us=31.941 ms185=5.909
+rank1 PASS
+====
+[rank0] listening on 29500, serving nccl id to 1 peers
+NCCL version 2.29.7+cuda13.2
+[rank 0/2] ncclCommInitRank OK
+[rank 0] count=7168 bytes=28672 correct=YES p50_est_us=8.083  (expect_sum=3)
+[rank 0] count=10752 bytes=43008 correct=YES p50_est_us=8.224  (expect_sum=3)
+[rank0] rough 185x reductions => 1.52 ms/token collective-only @ this size
+[rank 0] PASS
+[rank 1/2] ncclCommInitRank OK
+[rank 1] count=7168 bytes=28672 correct=YES p50_est_us=8.084  (expect_sum=3)
+[rank 1] count=10752 bytes=43008 correct=YES p50_est_us=8.223  (expect_sum=3)
+[rank 1] PASS
+====
+Cuda compilation tools, release 13.0, V13.0.88
+Build cuda_13.0.r13.0/compiler.36424714_0

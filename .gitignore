@@ -1,0 +1,7 @@
+.DS_Store
+*.gguf
+.env
+.secrets/
+__pycache__/
+*.pyc
+.venv/
