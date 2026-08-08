@@ -1,99 +1,134 @@
-# Kimi-K3 Neuron — 3-Spark TP3 bring-up package
+# Kimi-K3 Neuron — multi-Spark TP3 / TP4 bring-up package
 
-**Status: preview / bring-up — not a drop-in multi-Spark production server.**
+**Status: working e2e on 3- and 4-Spark fleets — not a drop-in production API server.**
 
-End-to-end **load → generate → finish** on **3× NVIDIA DGX Spark** is working with patches
-**0001–0012**. Decode speed is in the stretch band for single-stream exact TP3.
+Patches **0001–0012** deliver load → multi-prompt generate → finish on **DGX Spark** with
+rank-local GGUF residency and NCCL collectives.
 
 | | |
 |---|---|
 | **This recipe** | [`github.com/vcruz305/kimi-k3-neuron-tp3-dgxspark-recipe`](https://github.com/vcruz305/kimi-k3-neuron-tp3-dgxspark-recipe) |
-| **Model (GGUF)** | [`huggingface.co/vcruz305/Kimi-K3-Neuron-IQ1S-GGUF`](https://huggingface.co/vcruz305/Kimi-K3-Neuron-IQ1S-GGUF) (manual-gated, ~330 GB / 307.49 GiB) |
-| Upstream SparkInfer base | `gittensor-ai-lab/sparkinfer-k3` @ `7a9b77a043596157d74e4af376cf9f29f68ce368` |
-| Geometry | **AllExpertsFfnWidth TP3** — 896 experts/rank, FFN 512/512/512, `ncclCommInitRank` |
-| Patch tip | **0001–0012** (see [`APPLY.md`](APPLY.md)) |
+| **Model (GGUF)** | [`huggingface.co/vcruz305/Kimi-K3-Neuron-IQ1S-GGUF`](https://huggingface.co/vcruz305/Kimi-K3-Neuron-IQ1S-GGUF) (~330 GB / 307.49 GiB) |
+| Upstream base | `gittensor-ai-lab/sparkinfer-k3` @ `7a9b77a043596157d74e4af376cf9f29f68ce368` |
+| Patch tip | **0001–0012** — see [`APPLY.md`](APPLY.md) |
 
 ---
 
-## Benchmarks on 3× DGX Spark (measured)
+## Benchmarks (measured on real Sparks)
 
-Hardware: 3× DGX Spark (GB10). Model on **local NVMe**.  
-`max_ctx=8192`, `SPARKINFER_K3_MOE_WEPS=0`, `SPARKINFER_K3_GRAPH=0`, `NCCL_NVLS_ENABLE=0`.  
-Binary: `kimi_k3_dist_generate` after **0012**.
+Hardware: NVIDIA **DGX Spark** (GB10). Weights on **local NVMe** (not NFS/sshfs).  
+Flags: `max_ctx=8192`, `SPARKINFER_K3_MOE_WEPS=0`, `SPARKINFER_K3_GRAPH=0`, `NCCL_NVLS_ENABLE=0`.  
+Binary: `kimi_k3_dist_generate` (multi-prompt + KV reset `-2`).
 
-| Run | decode tok/s | tokens | vs RPC 2.85 | notes |
-|-----|-------------:|-------:|------------:|-------|
-| Clean finish | **5.67** | 32 | **1.99×** | first full e2e |
-| Longer window | **6.21** | 128 | **2.18×** | more stable decode |
-| Historical llama.cpp RPC layer-split | **2.85** | — | 1.0× | production path today on many 3-Spark setups |
-| Same-host TP3 (reference only) | ~42 | — | — | **3×H200 one box** — not Sparks |
+### 3× Spark — TP3 `AllExpertsFfnWidth` (FFN 512/512/512 · ~113 GiB/rank)
 
-Forecast ([`docs/SPARK-TP3-PERFORMANCE-FORECAST.md`](docs/SPARK-TP3-PERFORMANCE-FORECAST.md)):
-likely **4.5–6.0**, stretch **6.5–7.5**. **6.21 is stretch-band.** Peer multi-prompt hygiene
-has reported ~**6.5–7.2**. **~10 tok/s is not available from same-recipe polish** (needs
-batching / different split / more nodes / other engine).
+| Run | decode tok/s | tokens | vs RPC 2.85 |
+|-----|-------------:|-------:|------------:|
+| Clean e2e | **5.67** | 32 | **1.99×** |
+| Longer window | **6.21** | 128 | **2.18×** |
+| llama.cpp RPC layer-split (baseline) | **2.85** | — | 1.0× |
 
-**Context ceiling on 3 Sparks:** ~**113 GiB/rank** weights → practical **~8K** ctx. 12K/16K
-loads have OOM’d. Not a 1M-context path.
+### 4× Spark — TP4 `ExpertFfn2D` eg=2/fs=2 (FFN 768/768 · ~84 GiB/rank)
 
-**Quality:** speed runs with raw `--prompt-ids` can look degenerate. For quality, tokenize with
-the HF chat template (`k3_chat_template.jinja`) first.
+Multi-prompt · n-predict=128 · 6 prompts · **drop prompt0** for median:
+
+| Metric | Value |
+|--------|------:|
+| prompt0 (cold) | 6.71 |
+| prompt1 | 7.98 |
+| prompt2 | 7.90 |
+| prompt3 | 7.40 |
+| prompt4 (peak) | **8.02** |
+| prompt5 | 7.59 |
+| **Median (drop p0)** | **7.90** |
+| Mean (all 6) | **7.60** |
+| vs RPC 2.85 | **~2.77×** |
+| vs TP3 best 6.21 | **~1.27×** |
+
+**Finish:** OK finished clean on all four ranks (78f1 / 9f73 / 366f / b610).
+
+### Forecast / ceiling
+
+| Band | tok/s |
+|------|------:|
+| Forecast likely (TP3) | 4.5–6.0 |
+| Forecast stretch | 6.5–7.5 |
+| TP3 measured | **6.21** |
+| TP4 measured median | **7.90** (above prior stretch) |
+
+Honest: single-stream exact TP still has a hard ceiling. **~10+ t/s** needs more than flag polish
+(batching, different engine path, graphs with verified parity, fabric wins). See
+[`docs/SPARK-TP3-PERFORMANCE-FORECAST.md`](docs/SPARK-TP3-PERFORMANCE-FORECAST.md).
+
+**Context:** TP3 ~8K practical. TP4 has more headroom (~84 GiB/rank) but still not 1M.  
+**Quality:** raw `--prompt-ids` speed benches can look degenerate — use chat-template tokenization for quality.
 
 ---
 
-## How to run on 3 Sparks
+## Geometry
+
+| World | Plan | Experts / FFN | ~weights/rank |
+|------:|------|---------------|--------------:|
+| **3** | `AllExpertsFfnWidth` | 896 · 512/512/512 | ~113 GiB |
+| **4** | `ExpertFfn2D` eg=2 fs=2 | 448/group · 768/768 | ~84 GiB |
+
+Do **not** hot-add a 4th rank to a running TP3 job — relaunch with `--world 4`.
+
+---
+
+## How to run
 
 ### 0. Prerequisites
 
-- 3 Sparks with SSH, working RoCE/fabric (or at least TCP + NCCL), CUDA 13 / driver stack aligned
-- ~330 GB **local NVMe** free per node for the GGUF (avoid NFS for weights)
-- HF access to the gated model + `hf auth login`
+- 3 or 4 Sparks, SSH, fabric (RoCE preferred), CUDA stack aligned
+- **≥320 GB local NVMe free per node** for the GGUF
+- HF access to the gated model
 
-### 1. Download the model (each Spark, local disk)
+### 1. Local model copy (each Spark — critical)
+
+**Do not** load weights over NFS/sshfs for production benches. Map is fast; remote page faults kill load time.
 
 ```bash
 pip install -U "huggingface_hub[hf_xet]"
 hf auth login
 export HF_XET_HIGH_PERFORMANCE=1
+mkdir -p $HOME/models/kimi-k3-neuron-iq1s-local
 hf download vcruz305/Kimi-K3-Neuron-IQ1S-GGUF \
-  --local-dir $HOME/models/kimi-k3-neuron-iq1s \
+  --local-dir $HOME/models/kimi-k3-neuron-iq1s-local \
   --include "*.gguf" --include "k3_chat_template.jinja"
 ```
 
-### 2. Build SparkInfer + apply this recipe (0001–0012)
-
-See **[`APPLY.md`](APPLY.md)** for the full `git am` list. Short form:
-
-```bash
-git clone https://github.com/gittensor-ai-lab/sparkinfer-k3.git && cd sparkinfer-k3
-git checkout -B k3-tp3 7a9b77a043596157d74e4af376cf9f29f68ce368
-
-git clone --depth 1 \
-  https://github.com/vcruz305/kimi-k3-neuron-tp3-dgxspark-recipe /tmp/k3-recipe
-
-# apply 0001–0012 exactly as in APPLY.md, then:
-cmake -S runtime -B build -DSPARKINFER_TP=ON
-cmake --build build -j"$(nproc)" --target kimi_k3_dist_generate \
-  tp_rank_local_loader_cpu_test tp_dist_generate_protocol_cpu_test
-
-mkdir -p $HOME/k3-tp3/dist
-cp -f build/kimi_k3_dist_generate build/libsparkinfer_runtime.so $HOME/k3-tp3/dist/
-# copy the same dist/ tree to all three Sparks
-```
-
-### 3. Topology
+Entry shard:
 
 ```text
-Spark A  rank 0  CUDA0   listen 0.0.0.0:29500   coordinator + sampler + full LM head
-Spark B  rank 1  CUDA0   --coord A_FABRIC_IP:29500   worker
-Spark C  rank 2  CUDA0   --coord A_FABRIC_IP:29500   worker
-         └── NCCL ncclCommInitRank over fabric ──┘
-         └── TCP control plane (Hello → NCCL id → Load → Token → Finish) ──┘
+$HOME/models/kimi-k3-neuron-iq1s-local/k3-neuron-iq1s-00001-of-00009.gguf
 ```
 
-Use Spark A’s **fabric** IP (e.g. `10.10.10.x`), not a random public hostname, for `--coord`.
+### 2. Build + apply patches 0001–0012
 
-### 4. Launch (rank0 first)
+See **[`APPLY.md`](APPLY.md)**. Build targets should include `kimi_k3_dist_generate` and ship:
+
+```text
+kimi_k3_dist_generate
+libsparkinfer_runtime.so
+libsparkinfer_moe.so
+libnccl.so*   # if not on system path
+```
+
+Copy the full `dist/` tree to **every** rank (missing `.so` on one node aborts that rank).
+
+### 3. Topology example (4 Sparks)
+
+| Rank | Role | Example fabric |
+|-----:|------|----------------|
+| 0 | `--listen 0.0.0.0:29500` | 10.10.10.2 |
+| 1–3 | `--coord 10.10.10.2:29500` | .4 / .6 / .8 |
+
+Use the **fabric** IP that workers can reach (not only the management NIC).
+
+### 4. Launch (TP4 multi-prompt)
+
+Env on every rank:
 
 ```bash
 export LD_LIBRARY_PATH=$HOME/k3-tp3/dist:$LD_LIBRARY_PATH
@@ -101,73 +136,65 @@ export SPARKINFER_K3_MOE_WEPS=0
 export SPARKINFER_K3_GRAPH=0
 export NCCL_NVLS_ENABLE=0
 export CUDA_VISIBLE_DEVICES=0
-MODEL=$HOME/models/kimi-k3-neuron-iq1s/k3-neuron-iq1s-00001-of-00009.gguf
-BIN=$HOME/k3-tp3/dist/kimi_k3_dist_generate
-COORD=10.10.10.2   # Spark A fabric IP
-
-# --- Spark A (rank 0) ---
-$BIN --rank 0 --world 3 --listen 0.0.0.0:29500 \
-  --model "$MODEL" --prompt-ids 1,2,3 --n-predict 128 --max-ctx 8192 \
-  2> r0.stderr | tee r0.stdout
-
-# --- Spark B (rank 1) ---
-$BIN --rank 1 --world 3 --coord ${COORD}:29500 \
-  --model "$MODEL" --max-ctx 8192 2> r1.stderr | tee r1.stdout
-
-# --- Spark C (rank 2) ---
-$BIN --rank 2 --world 3 --coord ${COORD}:29500 \
-  --model "$MODEL" --max-ctx 8192 2> r2.stderr | tee r2.stdout
+MODEL=$HOME/models/kimi-k3-neuron-iq1s-local/k3-neuron-iq1s-00001-of-00009.gguf
 ```
 
-Success markers on rank0:
-
-- `rank 0 loaded ok`
-- `decode_tok_s=...`
-- `OK finished clean`
-
-First load is long (~30–60+ minutes for ~88 GiB MoE slice/rank onto GPU).
-
-### 5. Optional health / NCCL before long loads
+Rank 0:
 
 ```bash
-# per GPU
-python scripts/gpu_health_gate.py health
-
-# 3-rank microbench helpers live under scripts/ (see docs)
+./kimi_k3_dist_generate \
+  --rank 0 --world 4 --listen 0.0.0.0:29500 \
+  --model "$MODEL" \
+  --prompts-file ./prompts_ids.txt \
+  --n-predict 128 --max-ctx 8192
 ```
 
+Ranks 1–3:
+
+```bash
+./kimi_k3_dist_generate \
+  --rank R --world 4 --coord 10.10.10.2:29500 \
+  --model "$MODEL" --max-ctx 8192
+```
+
+**TP3:** same with `--world 3` and three hosts.
+
+### 5. Multi-prompt file + KV reset
+
+`--prompts-file`: one CSV token-id line per prompt. Model loads **once**.  
+Between prompts the binary broadcasts KV reset sentinel **token id = -2** (protocol allowlist).
+
+Report **median tok/s dropping prompt0** (cold window after load).
+
+### 6. Speed knobs (after eager is sealed)
+
+1. Local NVMe weights (done)  
+2. Multi-prompt / keep ranks warm  
+3. NCCL microbench (`k3_dist_nccl_microbench`) — RDMA vs TCP  
+4. `SPARKINFER_K3_GRAPH=1` A/B (same prompts; only after eager parity)  
+5. Do not thrash NCCL env blindly  
+
 ---
 
-## Documents
+## Docs
 
-| File | Audience |
-|---|---|
-| **[`APPLY.md`](APPLY.md)** | Clean `git am` chain **0001–0012** |
-| **[`SPARK-AGENT.md`](SPARK-AGENT.md)** | LLM agents operating Sparks |
-| [`THREE-SPARK-TP3-RECIPE.md`](THREE-SPARK-TP3-RECIPE.md) | Geometry + ladder |
-| [`docs/SPARK-TP3-PERFORMANCE-FORECAST.md`](docs/SPARK-TP3-PERFORMANCE-FORECAST.md) | Forecast + stop rules |
+| File | Topic |
+|------|--------|
+| [`APPLY.md`](APPLY.md) | Patch apply order |
 | [`docs/OPERATOR-3-AND-4-SPARK.md`](docs/OPERATOR-3-AND-4-SPARK.md) | 3- and 4-Spark geometry |
-| [`docs/TP3-EXPLAINED-AND-FIXED.md`](docs/TP3-EXPLAINED-AND-FIXED.md) | TP vs layer-split |
-| [`evidence/`](evidence/) | NCCL / wire-up receipts |
-| [`patches/sparkinfer/`](patches/sparkinfer/) | Frozen patches |
+| [`docs/SPARK-TP3-PERFORMANCE-FORECAST.md`](docs/SPARK-TP3-PERFORMANCE-FORECAST.md) | tok/s bands / ceilings |
+| [`docs/TP3-EXPLAINED-AND-FIXED.md`](docs/TP3-EXPLAINED-AND-FIXED.md) | TP3 design |
 
 ---
 
-## Hard non-claims
+## Non-claims
 
-Do **not** advertise this package as:
+- Not a multi-user OpenAI-compatible server  
+- Not proven long-context parity vs llama.cpp  
+- Not 40 t/s on Spark from this path  
+- Not 1M context on 3–4 Sparks full resident  
+- Speed benches ≠ quality benches without chat-template prompts  
 
-- install-and-run multi-Spark **production** inference;
-- **40+ tok/s on three Sparks** (that number is **same-host 3×H200**);
-- bit-identical to llama.cpp without parity gates;
-- **1M context on 3 Sparks** with full resident TP3;
-- support for `matched-byte-v2` on SparkInfer (llama.cpp path for now).
+## License
 
----
-
-## License / provenance
-
-- Patches target **SparkInfer-K3** (upstream license + NOTICE apply when merging).
-- Recipe docs and agent brief: MIT unless noted.
-- Model weights: see [HF card](https://huggingface.co/vcruz305/Kimi-K3-Neuron-IQ1S-GGUF) (modified-MIT / gated).
-- Preserve upstream attribution; do not strip NOTICE from kernel-derived paths.
+Patches follow upstream SparkInfer / project license terms in the base repo.
