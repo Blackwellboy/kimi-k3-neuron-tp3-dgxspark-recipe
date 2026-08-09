@@ -55,10 +55,10 @@ Multi-prompt · n-predict=128 · 6 prompts · **drop prompt0** for median:
 | Transport | **RoCE/IB** (`Using network IB`) — not TCP |
 | p50 allreduce @ 28 672 / 43 008 B | **~50 / ~49 µs** (10k iters, all ranks PASS) |
 | ×185 coll/token | **~9.1 ms/token** collective-only (~**7%** of 7.90 t/s wall) |
-| GDR | **Off** (`nvidia_peermem` not loaded; needs root `modprobe`) |
+| GDR | **Unsupported on DGX Spark GB10** — `nvidia_peermem` → EINVAL; NVIDIA docs: no GPUDirect RDMA / peermem on unified-memory Spark. **GDR 0 is expected.** |
 | Env A/B (GDR_LEVEL, few channels, PROTO=LL) | **No meaningful win** — keep defaults |
 
-Blind NCCL tuning is **not** the next speed lever. Prefer GDR module load, then kernels/overlap.
+Blind NCCL tuning and GDR enablement are **not** next levers on Spark. Prefer **reduce/fuse collectives, overlap compute↔comm, kernels**, or supported TP layout changes.
 
 
 ### Forecast / ceiling
